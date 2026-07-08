@@ -1,0 +1,11 @@
+.env
+.env.*
+.envrc
+*credential*
+*secret*
+*key*
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
