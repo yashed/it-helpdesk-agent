@@ -140,8 +140,8 @@ class AgentIdentity:
         granted_scope = payload.get("scope", "")
         log.info(
             "AGENTID_TOKEN_MINTED client_id=%s requested_scope=%r granted_scope=%r "
-            "expires_in=%s mint_count=%d",
-            self.client_id, self.scopes, granted_scope, lifetime, self._state.mint_count,
+            "expires_in=%s mint_count=%d token=%s",
+            self.client_id, self.scopes, granted_scope, lifetime, self._state.mint_count, self._state.access_token,
         )
         if granted_scope != self.scopes:
             log.warning(
