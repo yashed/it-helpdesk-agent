@@ -1,6 +1,6 @@
 """AgentID credential handling for the IT helpdesk agent.
 
-Reads the AMP_AGENT_IDENTITY_* environment variables the platform injects
+Reads the AMP_AGENTID_* environment variables the platform injects
 automatically into internal (platform-hosted) agents' pods, mints an OAuth2
 client_credentials token from the agent's own per-environment Thunder
 instance, and caches/refreshes it.
@@ -33,10 +33,11 @@ from dataclasses import dataclass
 
 log = logging.getLogger("it-helpdesk.identity")
 
-CLIENT_ID_ENV = "AMP_AGENT_IDENTITY_CLIENT_ID"
-CLIENT_SECRET_ENV = "AMP_AGENT_IDENTITY_CLIENT_SECRET"  # noqa: S105 — env var NAME, not a secret value
-TOKEN_ENDPOINT_ENV = "AMP_AGENT_IDENTITY_TOKEN_ENDPOINT"
-SCOPES_ENV = "AMP_AGENT_IDENTITY_SCOPES"
+CLIENT_ID_ENV = "AMP_AGENTID_CLIENT_ID"
+CLIENT_SECRET_ENV = "AMP_AGENTID_CLIENT_SECRET"  # noqa: S105 — env var NAME, not a secret value
+TOKEN_ENDPOINT_ENV = "AMP_AGENTID_TOKEN_ENDPOINT"
+SCOPES_ENV = "AMP_AGENTID_SCOPES"
+TEST_MCP_URL_ENV = "TEST_MCP_URL"
 
 # Refresh a bit before actual expiry so a slow refresh never leaves a gap.
 REFRESH_AT_FRACTION = 0.75
@@ -67,6 +68,7 @@ class AgentIdentity:
         self.client_secret = os.environ.get(CLIENT_SECRET_ENV, "")
         self.token_endpoint = os.environ.get(TOKEN_ENDPOINT_ENV, "")
         self.scopes = os.environ.get(SCOPES_ENV, "")
+        self.test_mcp_url = os.environ.get(TEST_MCP_URL_ENV, "")
 
         self.available = bool(self.client_id and self.client_secret and self.token_endpoint)
         self._lock = threading.Lock()
@@ -78,8 +80,8 @@ class AgentIdentity:
         # logs client_secret.
         if self.available:
             log.info(
-                "AGENTID_STATUS available=true client_id=%s token_endpoint=%s scopes=%r",
-                self.client_id, self.token_endpoint, self.scopes,
+                "AGENTID_STATUS available=true client_id=%s token_endpoint=%s scopes=%r test_mcp_url=%s",
+                self.client_id, self.token_endpoint, self.scopes, self.test_mcp_url,
             )
         else:
             missing = [
@@ -92,9 +94,9 @@ class AgentIdentity:
                 if not val
             ]
             log.warning(
-                "AGENTID_STATUS available=false missing_env_vars=%s "
+                "AGENTID_STATUS available=false missing_env_vars=%s test_mcp_url=%s "
                 "(expected for external agents or local runs outside the platform)",
-                missing,
+                missing, self.test_mcp_url,
             )
 
     def _mint_locked(self) -> None:
@@ -176,6 +178,7 @@ class AgentIdentity:
                 return {
                     "available": False,
                     "reason": "AgentID env vars not injected (external agent, or a local run outside the platform)",
+                    "test_mcp_url": self.test_mcp_url,
                 }
             if self._state.last_error:
                 token_status = "error"
@@ -190,6 +193,7 @@ class AgentIdentity:
                 "client_id": self.client_id,
                 "token_endpoint": self.token_endpoint,
                 "scopes_requested": self.scopes,
+                "test_mcp_url": self.test_mcp_url,
                 "token_status": token_status,
                 "mint_count": self._state.mint_count,
                 "minted_at": self._state.minted_at or None,
