@@ -7,10 +7,14 @@ not raised, so the agent can decide what to do (typically: escalate).
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+import os
 from typing import Any
 
-from langchain_core.tools import tool
+from langchain_core.tools import tool, StructuredTool
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from clients import employees as employees_client
 from clients import escalations as escalations_client
@@ -20,6 +24,114 @@ from clients import software as software_client
 from clients import system_status as status_client
 from clients import tickets as tickets_client
 from config import Config
+from identity import AGENT_IDENTITY
+
+log = logging.getLogger("it-helpdesk.tools")
+
+
+class DynamicHeaders(dict):
+    def __init__(self, get_token_func):
+        super().__init__()
+        self.get_token_func = get_token_func
+
+    def items(self):
+        token = self.get_token_func()
+        return [("Authorization", f"Bearer {token}")]
+
+    def __getitem__(self, key):
+        if key == "Authorization":
+            token = self.get_token_func()
+            return f"Bearer {token}"
+        raise KeyError(key)
+
+    def get(self, key, default=None):
+        if key == "Authorization":
+            token = self.get_token_func()
+            return f"Bearer {token}"
+        return default
+
+    def __contains__(self, key):
+        return key == "Authorization"
+
+    def keys(self):
+        return ["Authorization"]
+
+    def __iter__(self):
+        return iter(["Authorization"])
+
+    def __len__(self):
+        return 1
+
+    def copy(self):
+        return self
+
+
+def make_sync_tool(async_tool):
+    def sync_run(*args, **kwargs):
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, async_tool.coroutine(*args, **kwargs))
+                return future.result()
+        else:
+            return asyncio.run(async_tool.coroutine(*args, **kwargs))
+
+    return StructuredTool(
+        name=async_tool.name,
+        description=async_tool.description,
+        args_schema=async_tool.args_schema,
+        func=sync_run,
+        coroutine=async_tool.coroutine,
+        handle_tool_error=async_tool.handle_tool_error,
+        response_format=async_tool.response_format,
+    )
+
+
+def _load_mcp_tools() -> list[Any]:
+    mcp_tools = []
+    mcp_server_url = (AGENT_IDENTITY.test_mcp_url or os.environ.get("TEST_MCP_URL", "")).strip()
+    if not mcp_server_url:
+        log.info("AGENTID_MCP_CONNECT_SKIP reason='TEST_MCP_URL environment variable is empty'")
+        return mcp_tools
+
+    access_token = ""
+    if AGENT_IDENTITY.available:
+        try:
+            access_token = AGENT_IDENTITY.get_token()
+            log.info("AGENTID_MCP_CONNECT_START url=%s token=%s...", mcp_server_url, access_token[:15])
+        except Exception as exc:
+            log.error("AGENTID_MCP_TOKEN_ERROR url=%s error=%s", mcp_server_url, exc)
+            return mcp_tools
+    else:
+        log.warning("AGENTID_MCP_CONNECT_WARNING url=%s reason='AgentID identity is not available'", mcp_server_url)
+
+    headers = DynamicHeaders(AGENT_IDENTITY.get_token) if AGENT_IDENTITY.available else {}
+
+    server_configs: dict[str, dict[str, Any]] = {
+        "mcp_server": {
+            "url": mcp_server_url,
+            "transport": "streamable_http",
+            "headers": headers,
+        }
+    }
+
+    async def _fetch():
+        client = MultiServerMCPClient(server_configs)
+        return await client.get_tools()
+
+    try:
+        raw_tools = asyncio.run(_fetch())
+        mcp_tools = [make_sync_tool(t) for t in raw_tools]
+        log.info("AGENTID_MCP_CONNECT_SUCCESS url=%s tools=%r", mcp_server_url, [t.name for t in mcp_tools])
+    except Exception as exc:
+        log.error("AGENTID_MCP_CONNECT_FAILED url=%s error=%s", mcp_server_url, exc)
+
+    return mcp_tools
 
 
 def build_tools(cfg: Config) -> list[Any]:
@@ -195,7 +307,7 @@ def build_tools(cfg: Config) -> list[Any]:
         )
         return json.dumps(ticket)
 
-    return [
+    base_tools = [
         lookup_employee,
         verify_identity,
         get_open_tickets,
@@ -206,3 +318,4 @@ def build_tools(cfg: Config) -> list[Any]:
         search_it_policy,
         escalate_to_l2,
     ]
+    return base_tools + _load_mcp_tools()

@@ -4,6 +4,7 @@ langchain-core==1.4.0
 langchain-openai==1.2.1
 langchain-google-genai>=1.0.0
 langgraph==1.2.0
+langchain-mcp-adapters
 
 fastapi==0.136.1
 uvicorn[standard]==0.47.0
