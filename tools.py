@@ -34,20 +34,23 @@ class DynamicHeaders(dict):
         super().__init__()
         self.get_token_func = get_token_func
 
-    def items(self):
+    def _get_auth_header(self) -> str:
         token = self.get_token_func()
-        return [("Authorization", f"Bearer {token}")]
+        log.info("AGENTID_HEADERS_ACCESSED token=%s...", token[:15] if token else "none")
+        return f"Bearer {token}"
+
+    def items(self):
+        auth = self._get_auth_header()
+        return [("Authorization", auth)]
 
     def __getitem__(self, key):
         if key == "Authorization":
-            token = self.get_token_func()
-            return f"Bearer {token}"
+            return self._get_auth_header()
         raise KeyError(key)
 
     def get(self, key, default=None):
         if key == "Authorization":
-            token = self.get_token_func()
-            return f"Bearer {token}"
+            return self._get_auth_header()
         return default
 
     def __contains__(self, key):

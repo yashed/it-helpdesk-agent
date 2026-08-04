@@ -68,7 +68,7 @@ class AgentIdentity:
         self.client_secret = os.environ.get(CLIENT_SECRET_ENV, "")
         self.token_endpoint = os.environ.get(TOKEN_ENDPOINT_ENV, "")
         self.scopes = os.environ.get(SCOPES_ENV, "")
-        self.test_mcp_url = os.environ.get(TEST_MCP_URL_ENV, "")
+        self.test_mcp_url = os.environ.get(TEST_MCP_URL_ENV, "https://toolbox-production-890c.up.railway.app/mcp")
 
         self.available = bool(self.client_id and self.client_secret and self.token_endpoint)
         self._lock = threading.Lock()
@@ -101,6 +101,10 @@ class AgentIdentity:
 
     def _mint_locked(self) -> None:
         """Mints a fresh token via client_credentials. Caller must hold self._lock."""
+        log.info(
+            "AGENTID_TOKEN_MINT_START endpoint=%s client_id=%s scopes=%r",
+            self.token_endpoint, self.client_id, self.scopes
+        )
         body = urllib.parse.urlencode({"grant_type": "client_credentials", "scope": self.scopes}).encode()
         basic = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode()
         req = urllib.request.Request(  # noqa: S310 — token_endpoint is platform-injected, not user input
